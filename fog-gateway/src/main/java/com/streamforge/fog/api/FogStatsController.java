@@ -43,10 +43,10 @@ public class FogStatsController {
         stats.put("compressedBytes", forwarder.getCompressedBytes());
         stats.put("bytesSaved", bytesSaved);
         stats.put("cumulativeCompressionRatio",
-                forwarder.getRawBytes() == 0
+                forwarder.getRawBytes() == 0 || forwarder.getCompressedBytes() == 0
                         ? 1.0
-                        : (double) forwarder.getCompressedBytes()
-                        / forwarder.getRawBytes());
+                        : (double) forwarder.getRawBytes()
+                        / forwarder.getCompressedBytes());
         stats.put("activeEncodingCompression", forwarder.getActiveCodec());
         stats.put("circuitBreakerState", forwarder.getCircuitBreakerState());
         stats.put("pendingWalSegmentCount", wal.getPendingSegmentCount());

@@ -35,14 +35,17 @@ $fog = Invoke-JsonGet "$fogUrl/api/fog/stats"
 Write-Host ("Edge reduction: {0:N2}% | Anomaly overrides: {1}" -f $edge.reductionPercent, $edge.anomaliesDetected)
 Write-Host ("Fog compression ratio: {0:N3}x | Codec: {1}" -f $fog.cumulativeCompressionRatio, $fog.activeEncodingCompression)
 
+$edgeHighThroughput = Invoke-RestMethod -Uri "$edgeUrl/api/edge/control" -Method Post `
+    -ContentType "application/json" -Body '{"nodeCount":20,"emitIntervalMs":200,"triggerAnomalySpike":true}'
+
 $outageResponse = Invoke-RestMethod -Uri "$cloudUrl/api/cloud/chaos" -Method Post `
     -ContentType "application/json" -Body '{"failMode":true,"latencyMs":0}'
 if ($outageResponse.failMode -ne $true) {
     throw "Cloud outage mode did not enable."
 }
 
-Write-Host "Cloud outage enabled. Waiting 8 seconds for circuit and WAL failover..."
-Start-Sleep -Seconds 8
+Write-Host "Cloud outage enabled. Waiting 10 seconds for circuit and WAL failover..."
+Start-Sleep -Seconds 10
 $fogOutage = Invoke-JsonGet "$fogUrl/api/fog/stats"
 $state = [string]$fogOutage.circuitBreakerState
 $walSegments = [long]$fogOutage.pendingWalSegmentCount
@@ -62,8 +65,8 @@ $batchesBeforeRecovery = [long]$cloudBeforeRecovery.batchesIngested
 Invoke-RestMethod -Uri "$cloudUrl/api/cloud/chaos" -Method Post `
     -ContentType "application/json" -Body '{"failMode":false,"latencyMs":0}' | Out-Null
 
-Write-Host "Cloud outage disabled. Waiting 8 seconds for WAL replay..."
-Start-Sleep -Seconds 8
+Write-Host "Cloud outage disabled. Waiting 12 seconds for WAL replay..."
+Start-Sleep -Seconds 12
 $fogRecovered = Invoke-JsonGet "$fogUrl/api/fog/stats"
 $cloudRecovered = Invoke-JsonGet "$cloudUrl/api/cloud/stats"
 $recoveredSegments = [long]$fogRecovered.pendingWalSegmentCount

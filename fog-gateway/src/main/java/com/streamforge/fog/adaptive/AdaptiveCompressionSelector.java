@@ -103,7 +103,7 @@ public class AdaptiveCompressionSelector {
         }
 
         return new Selection(encoding, compression, encoded, compressed,
-                ChecksumUtil.computeCrc32(encoded));
+                ChecksumUtil.computeCrc32(compressed));
     }
 
     public CompressedBatchRequest buildTelemetryBatch(List<SensorEvent> events,

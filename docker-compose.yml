@@ -25,9 +25,9 @@ services:
       MYSQL_PASSWORD: streamforge
       MYSQL_ROOT_PASSWORD: root
     ports:
-      - "3306:3306"
+      - "3307:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "streamforge", "-pstreamforge"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -48,6 +48,7 @@ services:
       - streamforge-net
 
   cloud-ingest:
+    restart: on-failure
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -59,6 +60,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: streamforge
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.MySQLDialect
     ports:
       - "8081:8081"
       - "9090:9090"
@@ -71,6 +73,7 @@ services:
       - streamforge-net
 
   fog-gateway:
+    restart: on-failure
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -93,6 +96,7 @@ services:
       - streamforge-net
 
   edge-node:
+    restart: on-failure
     build:
       context: .
       dockerfile: Dockerfile.backend

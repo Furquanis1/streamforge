@@ -40,6 +40,10 @@ echo "Edge reduction: ${edge_reduction}% | Anomaly overrides: ${anomalies}"
 echo "Fog compression ratio: ${fog_ratio}x | Codec: ${codec}"
 
 curl -fsS --max-time 5 -H 'Content-Type: application/json' \
+    -d '{"nodeCount":20,"emitIntervalMs":200,"triggerAnomalySpike":true}' \
+    "$EDGE_URL/api/edge/control" >/dev/null
+
+curl -fsS --max-time 5 -H 'Content-Type: application/json' \
     -d '{"failMode":true,"latencyMs":0}' \
     "$CLOUD_URL/api/cloud/chaos" >/tmp/streamforge-chaos-outage.json
 enabled="$(json_get failMode </tmp/streamforge-chaos-outage.json)"
@@ -48,8 +52,8 @@ if [ "$enabled" != "True" ] && [ "$enabled" != "true" ]; then
     exit 1
 fi
 
-echo "Cloud outage enabled. Waiting 8 seconds for circuit and WAL failover..."
-sleep 8
+echo "Cloud outage enabled. Waiting 10 seconds for circuit and WAL failover..."
+sleep 10
 curl -fsS --max-time 5 "$FOG_URL/api/fog/stats" >/tmp/streamforge-fog-outage.json
 state="$(json_get circuitBreakerState </tmp/streamforge-fog-outage.json)"
 wal_segments="$(json_get pendingWalSegmentCount </tmp/streamforge-fog-outage.json)"
@@ -72,8 +76,8 @@ curl -fsS --max-time 5 -H 'Content-Type: application/json' \
     -d '{"failMode":false,"latencyMs":0}' \
     "$CLOUD_URL/api/cloud/chaos" >/dev/null
 
-echo "Cloud outage disabled. Waiting 8 seconds for WAL replay..."
-sleep 8
+echo "Cloud outage disabled. Waiting 12 seconds for WAL replay..."
+sleep 12
 curl -fsS --max-time 5 "$FOG_URL/api/fog/stats" >/tmp/streamforge-fog-recovered.json
 curl -fsS --max-time 5 "$CLOUD_URL/api/cloud/stats" >/tmp/streamforge-cloud-recovered.json
 recovered_segments="$(json_get pendingWalSegmentCount </tmp/streamforge-fog-recovered.json)"

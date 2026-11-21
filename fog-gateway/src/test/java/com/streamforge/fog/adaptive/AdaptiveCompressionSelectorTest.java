@@ -3,6 +3,7 @@ package com.streamforge.fog.adaptive;
 import com.streamforge.proto.CompressionType;
 import com.streamforge.proto.EncodingType;
 import com.streamforge.proto.SensorEvent;
+import com.streamforge.common.integrity.ChecksumUtil;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -34,6 +35,18 @@ class AdaptiveCompressionSelectorTest {
                 selector.select(constantBatch(9));
         assertEquals(EncodingType.PLAIN_ROW, small.encoding());
         assertEquals(CompressionType.RAW_NONE, small.compression());
+    }
+
+    @Test
+    void crcIsComputedOverTheWirePayload() {
+        AdaptiveCompressionSelector selector =
+                new AdaptiveCompressionSelector(500, 1.15);
+        AdaptiveCompressionSelector.Selection selection =
+                selector.select(constantBatch(500));
+
+        assertEquals(
+                ChecksumUtil.computeCrc32(selection.wirePayload()),
+                selection.crc32Checksum());
     }
 
     private static List<SensorEvent> constantBatch(int count) {

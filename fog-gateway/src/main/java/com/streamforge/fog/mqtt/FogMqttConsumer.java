@@ -6,22 +6,31 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
-import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
+import org.eclipse.paho.client.mqttv3.MqttSecurityException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class FogMqttConsumer {
+    private static final Logger log = LoggerFactory.getLogger(FogMqttConsumer.class);
     public static final int QUEUE_CAPACITY = 20_000;
     private final FogProperties properties;
     private final LinkedBlockingQueue<SensorEvent> ingestionQueue =
             new LinkedBlockingQueue<>(QUEUE_CAPACITY);
-    private volatile MqttClient client;
+    private volatile MqttAsyncClient client;
+    private ScheduledExecutorService connectionExecutor;
 
     public FogMqttConsumer(FogProperties properties) {
         this.properties = properties;
@@ -29,19 +38,32 @@ public class FogMqttConsumer {
 
     @PostConstruct
     public void start() {
+        connectionExecutor = Executors.newSingleThreadScheduledExecutor(
+                runnable -> Thread.ofPlatform().daemon(true).name("fog-mqtt").unstarted(runnable));
+        connectionExecutor.scheduleWithFixedDelay(this::connect, 0, 5, TimeUnit.SECONDS);
+    }
+
+    private void connect() {
+        if (client != null && client.isConnected()) {
+            return;
+        }
         try {
-            client = new MqttClient(
+            String suffix = UUID.randomUUID().toString().substring(0, 8);
+            MqttAsyncClient candidate = new MqttAsyncClient(
                     properties.getBrokerUrl(),
-                    properties.getClientId(),
+                    properties.getClientId() + "-" + suffix,
                     new MemoryPersistence());
-            client.setCallback(new MqttCallbackExtended() {
+            candidate.setCallback(new MqttCallbackExtended() {
                 @Override
                 public void connectComplete(boolean reconnect, String serverURI) {
-                    subscribe();
+                    subscribe(candidate);
+                    log.info("Connected to MQTT broker {}{}", serverURI,
+                            reconnect ? " (reconnected)" : "");
                 }
 
                 @Override
                 public void connectionLost(Throwable cause) {
+                    log.warn("MQTT connection lost: {}", cause == null ? "unknown" : cause.getMessage());
                 }
 
                 @Override
@@ -50,9 +72,11 @@ public class FogMqttConsumer {
                         SensorEvent event = SensorEvent.parseFrom(message.getPayload());
                         if (!ingestionQueue.offer(event)) {
                             SensorEvent overflow = ingestionQueue.poll();
-                            ingestionQueue.offer(overflow == null ? event : event);
+                            ingestionQueue.offer(overflow == null ? event : overflow);
                         }
-                    } catch (Exception ignored) {
+                    } catch (Exception e) {
+                        log.error("Failed to deserialize SensorEvent from MQTT topic {} ({} bytes): {}",
+                                topic, message.getPayload().length, e.getMessage());
                     }
                 }
 
@@ -62,20 +86,28 @@ public class FogMqttConsumer {
             });
             MqttConnectOptions options = new MqttConnectOptions();
             options.setAutomaticReconnect(true);
-            options.setCleanSession(false);
-            client.connect(options);
-            subscribe();
-        } catch (MqttException ignored) {
+            options.setCleanSession(true);
+            options.setConnectionTimeout(10);
+            options.setKeepAliveInterval(20);
+            candidate.connect(options).waitForCompletion(5000);
+            client = candidate;
+            subscribe(candidate);
+        } catch (MqttSecurityException e) {
+            log.error("MQTT authentication rejected by {}: {}", properties.getBrokerUrl(), e.getMessage());
+        } catch (MqttException e) {
+            log.warn("MQTT connection pending for {}: {}", properties.getBrokerUrl(), e.getMessage());
         }
     }
 
-    private void subscribe() {
-        if (client == null || !client.isConnected()) {
+    private void subscribe(MqttAsyncClient mqttClient) {
+        if (mqttClient == null || !mqttClient.isConnected()) {
             return;
         }
         try {
-            client.subscribe(properties.getSubscribeTopic(), 1);
-        } catch (MqttException ignored) {
+            mqttClient.subscribe(properties.getSubscribeTopic(), 1);
+            log.info("Subscribed to {} at broker {}", properties.getSubscribeTopic(), properties.getBrokerUrl());
+        } catch (MqttException e) {
+            log.warn("Subscription failed for {}: {}", properties.getSubscribeTopic(), e.getMessage());
         }
     }
 
@@ -97,6 +129,9 @@ public class FogMqttConsumer {
 
     @PreDestroy
     public void close() {
+        if (connectionExecutor != null) {
+            connectionExecutor.shutdownNow();
+        }
         if (client == null) {
             return;
         }

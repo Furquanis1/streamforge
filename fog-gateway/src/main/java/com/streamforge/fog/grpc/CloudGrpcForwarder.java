@@ -13,7 +13,10 @@ import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.StatusRuntimeException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +27,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 public class CloudGrpcForwarder {
+    static final class BatchRejectedException extends RuntimeException {
+        BatchRejectedException(String message) {
+            super(message);
+        }
+    }
+
     private final ManagedChannel channel;
     private final TelemetryIngestServiceGrpc.TelemetryIngestServiceBlockingStub stub;
     private final DiskWriteAheadLog wal;
@@ -36,6 +45,7 @@ public class CloudGrpcForwarder {
     private final AtomicReference<String> activeCodec =
             new AtomicReference<>("AUTO");
 
+    @Autowired
     public CloudGrpcForwarder(FogProperties properties, DiskWriteAheadLog wal) {
         this.wal = wal;
         this.channel = ManagedChannelBuilder
@@ -59,9 +69,13 @@ public class CloudGrpcForwarder {
     private static CircuitBreaker createCircuitBreaker() {
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)
-                .slidingWindowSize(10)
-                .waitDurationInOpenState(Duration.ofSeconds(5))
-                .permittedNumberOfCallsInHalfOpenState(3)
+                .slidingWindowSize(4)
+                .minimumNumberOfCalls(1)
+                .waitDurationInOpenState(Duration.ofSeconds(4))
+                .permittedNumberOfCallsInHalfOpenState(2)
+                .automaticTransitionFromOpenToHalfOpenEnabled(true)
+                .recordExceptions(StatusRuntimeException.class,
+                        BatchRejectedException.class)
                 .build();
         return CircuitBreakerRegistry.of(config).circuitBreaker("fog-cloud");
     }
@@ -79,10 +93,17 @@ public class CloudGrpcForwarder {
             throw new IllegalArgumentException("batch must not be null");
         }
         try {
-            BatchAckResponse response = CircuitBreaker.decorateSupplier(
-                            circuitBreaker,
-                            Retry.decorateSupplier(retry, () -> stub.ingestBatch(batch)))
-                    .get();
+            BatchAckResponse response = circuitBreaker.executeSupplier(
+                    Retry.decorateSupplier(retry, () -> {
+                        BatchAckResponse ack = stub.ingestBatch(batch);
+                        if (!ack.getAccepted()) {
+                            throw new BatchRejectedException(
+                                    ack.getMessage() == null
+                                            ? "Cloud rejected batch"
+                                            : ack.getMessage());
+                        }
+                        return ack;
+                    }));
             if (response.getAccepted()) {
                 batchesSent.incrementAndGet();
                 rawBytes.addAndGet(batch.getRawBytesSize());
@@ -93,8 +114,13 @@ public class CloudGrpcForwarder {
                 activeCodec.set(batch.getEncoding() + "/" + batch.getCompression());
                 return response;
             }
+            throw new BatchRejectedException(
+                    response.getMessage() == null
+                            ? "Cloud rejected batch"
+                            : response.getMessage());
+        } catch (StatusRuntimeException | CallNotPermittedException e) {
             wal.append(batch);
-            return response;
+            throw e;
         } catch (RuntimeException e) {
             wal.append(batch);
             throw e;
@@ -112,16 +138,29 @@ public class CloudGrpcForwarder {
         }
     }
 
-    @Scheduled(fixedDelay = 3000)
+    @Scheduled(fixedDelay = 2000)
     public void replayWal() {
         CircuitBreaker.State state = circuitBreaker.getState();
         if (state == CircuitBreaker.State.OPEN) {
             return;
         }
+        if (wal.getPendingSegmentCount() == 0) {
+            return;
+        }
         List<CompressedBatchRequest> pending = wal.drainPendingBatches(100);
         for (CompressedBatchRequest batch : pending) {
             try {
-                BatchAckResponse response = stub.ingestBatch(batch);
+                BatchAckResponse response = circuitBreaker.executeSupplier(
+                        () -> {
+                            BatchAckResponse ack = stub.ingestBatch(batch);
+                            if (!ack.getAccepted()) {
+                                throw new BatchRejectedException(
+                                        ack.getMessage() == null
+                                                ? "Cloud rejected replayed batch"
+                                                : ack.getMessage());
+                            }
+                            return ack;
+                        });
                 if (response.getAccepted()) {
                     wal.acknowledgeUpTo(batch);
                     batchesSent.incrementAndGet();

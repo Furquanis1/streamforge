@@ -49,9 +49,6 @@ public class MicroBatchAccumulator {
             flushNow();
             return true;
         }
-        if (event.getAnomaly()) {
-            flushNow();
-        }
         return true;
     }
 
@@ -77,9 +74,6 @@ public class MicroBatchAccumulator {
             }
             batch.add(event);
             if (batch.size() >= batchMaxSize) {
-                return flushNow();
-            }
-            if (event.getAnomaly()) {
                 return flushNow();
             }
         }

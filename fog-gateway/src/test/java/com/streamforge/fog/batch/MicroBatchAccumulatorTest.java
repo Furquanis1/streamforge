@@ -35,14 +35,15 @@ class MicroBatchAccumulatorTest {
     }
 
     @Test
-    void anomalyEventFlushesFastPath() {
+    void anomalyEventDoesNotBreakNormalBatching() {
         MicroBatchAccumulator accumulator =
                 new MicroBatchAccumulator(new LinkedBlockingQueue<>(), 250, 10_000);
         List<SensorEvent>[] captured = new List[]{List.of()};
         accumulator.setFlushHandler(events -> captured[0] = events);
         accumulator.offer(event(false));
         accumulator.offer(event(true));
-        assertTrue(captured[0].size() >= 2);
+        assertEquals(2, accumulator.size());
+        assertTrue(captured[0].isEmpty());
     }
 
     private static SensorEvent event(boolean anomaly) {

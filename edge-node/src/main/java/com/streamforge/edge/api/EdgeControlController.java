@@ -38,7 +38,10 @@ public class EdgeControlController {
         if (request.zscoreThreshold() != null) {
             simulator.setZscoreThreshold(request.zscoreThreshold());
         }
-        if (Boolean.TRUE.equals(request.anomalyBurst())) {
+        boolean triggerAnomalySpike =
+                Boolean.TRUE.equals(request.anomalyBurst())
+                        || Boolean.TRUE.equals(request.triggerAnomalySpike());
+        if (triggerAnomalySpike) {
             simulator.triggerAnomalyBurst(
                     request.anomalyBurstCount() == null
                             ? 20
@@ -53,6 +56,7 @@ public class EdgeControlController {
             Double deadbandEpsilon,
             Double zscoreThreshold,
             Boolean anomalyBurst,
+            Boolean triggerAnomalySpike,
             Integer anomalyBurstCount) {
     }
 }
