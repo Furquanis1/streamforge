@@ -1,2 +1,16 @@
 server:
-  port: 8081
+  port: 8082
+
+streamforge:
+  fog:
+    broker-url: tcp://localhost:1883
+    client-id: streamforge-fog-gateway
+    subscribe-topic: telemetry/raw/#
+    cloud-grpc-host: localhost
+    cloud-grpc-port: 9090
+    batch-max-size: 250
+    batch-flush-interval-ms: 2000
+    wal-directory: ./wal
+    wal-max-bytes: 52428800
+    high-throughput-events-per-sec: 500
+    min-compression-gain-ratio: 1.15
