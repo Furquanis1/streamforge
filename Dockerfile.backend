@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+FROM maven:3.9.9-eclipse-temurin-21 AS build
+WORKDIR /workspace
+
+COPY pom.xml ./pom.xml
+COPY pipeline-proto ./pipeline-proto
+COPY pipeline-common ./pipeline-common
+COPY edge-node ./edge-node
+COPY fog-gateway ./fog-gateway
+COPY cloud-ingest ./cloud-ingest
+
+RUN mvn -B -ntp clean package -DskipTests
+
+FROM eclipse-temurin:21-jre-alpine AS runtime
+ARG SERVICE_MODULE
+ENV SERVICE_MODULE=${SERVICE_MODULE}
+WORKDIR /app
+
+RUN case "${SERVICE_MODULE}" in edge-node|fog-gateway|cloud-ingest) ;; *) echo "SERVICE_MODULE must be edge-node, fog-gateway, or cloud-ingest" >&2; exit 1 ;; esac
+
+COPY --from=build /workspace/${SERVICE_MODULE}/target/${SERVICE_MODULE}-*.jar /app/app.jar
+
+EXPOSE 8081 8082 8083 9090
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

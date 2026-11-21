@@ -1,3 +1,12 @@
+name: streamforge
+
+networks:
+  streamforge-net:
+    driver: bridge
+
+volumes:
+  fog_wal:
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2.0
@@ -5,27 +14,118 @@ services:
       - "1883:1883"
     volumes:
       - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - streamforge-net
 
   mysql:
     image: mysql:8.0
     environment:
       MYSQL_DATABASE: streamforge
+      MYSQL_USER: streamforge
+      MYSQL_PASSWORD: streamforge
       MYSQL_ROOT_PASSWORD: root
     ports:
       - "3306:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
-      interval: 10s
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 20s
+    networks:
+      - streamforge-net
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - streamforge-net
 
-  toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.9.0
+  cloud-ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        SERVICE_MODULE: cloud-ingest
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/streamforge?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+      SPRING_DATASOURCE_USERNAME: streamforge
+      SPRING_DATASOURCE_PASSWORD: streamforge
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
     ports:
-      - "8474:8474"
+      - "8081:8081"
       - "9090:9090"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - streamforge-net
+
+  fog-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        SERVICE_MODULE: fog-gateway
+    environment:
+      STREAMFORGE_FOG_BROKER_URL: tcp://mosquitto:1883
+      STREAMFORGE_FOG_CLOUD_GRPC_HOST: cloud-ingest
+      STREAMFORGE_FOG_CLOUD_GRPC_PORT: "9090"
+    ports:
+      - "8082:8082"
+    volumes:
+      - fog_wal:/app/wal
+    depends_on:
+      mosquitto:
+        condition: service_started
+      cloud-ingest:
+        condition: service_started
+    networks:
+      - streamforge-net
+
+  edge-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        SERVICE_MODULE: edge-node
+    environment:
+      STREAMFORGE_EDGE_BROKER_URL: tcp://mosquitto:1883
+    ports:
+      - "8083:8083"
+    depends_on:
+      mosquitto:
+        condition: service_started
+      fog-gateway:
+        condition: service_started
+    networks:
+      - streamforge-net
+
+  telemetry-dashboard:
+    build:
+      context: ./telemetry-dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_EDGE_API_URL: http://localhost:8083
+        VITE_FOG_API_URL: http://localhost:8082
+        VITE_CLOUD_API_URL: http://localhost:8081
+    ports:
+      - "5173:5173"
+    depends_on:
+      cloud-ingest:
+        condition: service_started
+      fog-gateway:
+        condition: service_started
+      edge-node:
+        condition: service_started
+    networks:
+      - streamforge-net

@@ -1,7 +1,7 @@
 export const API = {
-  edge: 'http://localhost:8083',
-  fog: 'http://localhost:8082',
-  cloud: 'http://localhost:8081',
+  edge: import.meta.env.VITE_EDGE_API_URL || 'http://localhost:8083',
+  fog: import.meta.env.VITE_FOG_API_URL || 'http://localhost:8082',
+  cloud: import.meta.env.VITE_CLOUD_API_URL || 'http://localhost:8081',
 }
 
 export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
