@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package com.streamforge.proto;
+
+option java_multiple_files = true;
+option java_package = "com.streamforge.proto";
+
+enum CompressionType {
+  RAW_NONE = 0;
+  GZIP = 1;
+  LZ4 = 2;
+  ZSTD = 3;
+}
+
+enum EncodingType {
+  PLAIN_ROW = 0;
+  COLUMNAR_DELTA = 1;
+}
+
+message SensorEvent {
+  string node_id = 1;
+  string sensor_type = 2;
+  int64 timestamp_ms = 3;
+  double value = 4;
+  bool anomaly = 5;
+}
+
+message SensorEventBatch {
+  repeated SensorEvent events = 1;
+}
+
+message CompressedBatchRequest {
+  string batch_id = 1;
+  string fog_node_id = 2;
+  int64 created_at_ms = 3;
+  int32 record_count = 4;
+  int32 raw_bytes_size = 5;
+  int32 compressed_bytes_size = 6;
+  int32 edge_dropped_count = 7;
+  CompressionType compression = 8;
+  EncodingType encoding = 9;
+  int64 crc32_checksum = 10;
+  bytes payload = 11;
+}
+
+message BatchAckResponse {
+  string batch_id = 1;
+  bool accepted = 2;
+  bool duplicate = 3;
+  int64 server_received_at_ms = 4;
+  string message = 5;
+}
+
+service TelemetryIngestService {
+  rpc IngestBatch (CompressedBatchRequest) returns (BatchAckResponse);
+}
