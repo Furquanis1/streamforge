@@ -1,2 +1,14 @@
 server:
   port: 8083
+
+streamforge:
+  edge:
+    broker-url: tcp://localhost:1883
+    client-id-prefix: streamforge-edge-
+    topic-prefix: telemetry/raw
+    node-count: 10
+    emit-interval-ms: 500
+    ring-buffer-capacity: 5000
+    deadband-epsilon: 0.15
+    zscore-threshold: 3.0
+    max-heartbeat-ms: 10000
